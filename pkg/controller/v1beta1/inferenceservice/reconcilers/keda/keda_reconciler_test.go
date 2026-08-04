@@ -421,6 +421,87 @@ func TestGetKedaMetrics_NilAutoScaling(t *testing.T) {
 	assert.Empty(t, triggers)
 }
 
+// TestGetKedaMetrics_ResourceMetricSourceType_NilResource is a regression test
+// for https://github.com/kserve/kserve/issues/4548. The KEDA reconciler must
+// return a clear error rather than panic when a ResourceMetricSourceType entry
+// has a nil Resource pointer (which can happen when the webhook is bypassed).
+func TestGetKedaMetrics_ResourceMetricSourceType_NilResource(t *testing.T) {
+	componentMeta := metav1.ObjectMeta{
+		Name:      "test-component",
+		Namespace: "test-namespace",
+	}
+	componentExt := &v1beta1.ComponentExtensionSpec{
+		AutoScaling: &v1beta1.AutoScalingSpec{
+			Metrics: []v1beta1.MetricsSpec{
+				{
+					Type:     v1beta1.ResourceMetricSourceType,
+					Resource: nil, // missing Resource field — must not panic
+				},
+			},
+		},
+	}
+	configMap := &corev1.ConfigMap{}
+
+	triggers, err := getKedaMetrics(componentMeta, componentExt, configMap)
+	assert.Nil(t, triggers)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "metricSpec.Resource is not set")
+}
+
+// TestGetKedaMetrics_ExternalMetricSourceType_NilExternal is a regression test
+// for https://github.com/kserve/kserve/issues/4548. The KEDA reconciler must
+// return a clear error rather than panic when an ExternalMetricSourceType entry
+// has a nil External pointer (which can happen when the webhook is bypassed).
+func TestGetKedaMetrics_ExternalMetricSourceType_NilExternal(t *testing.T) {
+	componentMeta := metav1.ObjectMeta{
+		Name:      "test-component",
+		Namespace: "test-namespace",
+	}
+	componentExt := &v1beta1.ComponentExtensionSpec{
+		AutoScaling: &v1beta1.AutoScalingSpec{
+			Metrics: []v1beta1.MetricsSpec{
+				{
+					Type:     v1beta1.ExternalMetricSourceType,
+					External: nil, // missing External field — must not panic
+				},
+			},
+		},
+	}
+	configMap := &corev1.ConfigMap{}
+
+	triggers, err := getKedaMetrics(componentMeta, componentExt, configMap)
+	assert.Nil(t, triggers)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "metricSpec.External is not set")
+}
+
+// TestGetKedaMetrics_PodMetricSourceType_NilPodMetric is a regression test
+// for https://github.com/kserve/kserve/issues/4548. The KEDA reconciler must
+// return a clear error rather than panic when a PodMetricSourceType entry
+// has a nil PodMetric pointer (which can happen when the webhook is bypassed).
+func TestGetKedaMetrics_PodMetricSourceType_NilPodMetric(t *testing.T) {
+	componentMeta := metav1.ObjectMeta{
+		Name:      "test-component",
+		Namespace: "test-namespace",
+	}
+	componentExt := &v1beta1.ComponentExtensionSpec{
+		AutoScaling: &v1beta1.AutoScalingSpec{
+			Metrics: []v1beta1.MetricsSpec{
+				{
+					Type:      v1beta1.PodMetricSourceType,
+					PodMetric: nil, // missing PodMetric field — must not panic
+				},
+			},
+		},
+	}
+	configMap := &corev1.ConfigMap{}
+
+	triggers, err := getKedaMetrics(componentMeta, componentExt, configMap)
+	assert.Nil(t, triggers)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "metricSpec.PodMetric is not set")
+}
+
 func TestGetKedaMetrics_ResourceMetricSourceType_Utilization(t *testing.T) {
 	componentMeta := metav1.ObjectMeta{
 		Name:      "test-component",

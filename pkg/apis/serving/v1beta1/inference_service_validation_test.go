@@ -581,6 +581,205 @@ func TestAutoscalerClassKEDA(t *testing.T) {
 	}
 }
 
+// TestExternalMetricsRequireKEDA is a regression test for
+// https://github.com/kserve/kserve/issues/4548.
+// External (and PodMetric) source types must be rejected when the autoscaler
+// class is not keda, so the controller never reaches the code path that would
+// panic on a nil metric.Resource dereference.
+func TestExternalMetricsRequireKEDA(t *testing.T) {
+	g := gomega.NewGomegaWithT(t)
+
+	tfPredictor := func() PredictorSpec {
+		return PredictorSpec{
+			Tensorflow: &TFServingSpec{
+				PredictorExtensionSpec: PredictorExtensionSpec{
+					StorageURI:     proto.String("gs://testbucket/testmodel"),
+					RuntimeVersion: proto.String("0.14.0"),
+				},
+			},
+		}
+	}
+
+	scenarios := map[string]struct {
+		isvc       *InferenceService
+		errMatcher gomega.OmegaMatcher
+	}{
+		// Issue #4548: External metric type without autoscalerClass=keda must be rejected.
+		"Reject External metric type with no autoscalerClass annotation": {
+			isvc: &InferenceService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"serving.kserve.io/deploymentMode": "Standard",
+					},
+				},
+				Spec: InferenceServiceSpec{
+					Predictor: func() PredictorSpec {
+						p := tfPredictor()
+						p.ComponentExtensionSpec = ComponentExtensionSpec{
+							AutoScaling: &AutoScalingSpec{
+								Metrics: []MetricsSpec{
+									{
+										Type: ExternalMetricSourceType,
+										External: &ExternalMetricSource{
+											Metric: ExternalMetrics{
+												Backend: PrometheusBackend,
+												Query:   "avg(vllm_requests_running)",
+											},
+											Target: MetricTarget{
+												Type:  ValueMetricType,
+												Value: NewMetricQuantity("10"),
+											},
+										},
+									},
+								},
+							},
+						}
+						return p
+					}(),
+				},
+			},
+			errMatcher: gomega.MatchError(gomega.ContainSubstring(
+				fmt.Sprintf("metric source type [%s] requires annotation %s=%s",
+					ExternalMetricSourceType,
+					constants.AutoscalerClass,
+					constants.AutoscalerClassKeda,
+				),
+			)),
+		},
+		// Explicit autoscalerClass=hpa must also reject External metric types.
+		// The existing HPA validation returns its own error for non-Resource types.
+		"Reject External metric type with explicit autoscalerClass=hpa": {
+			isvc: &InferenceService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"serving.kserve.io/deploymentMode":  "Standard",
+						"serving.kserve.io/autoscalerClass": "hpa",
+					},
+				},
+				Spec: InferenceServiceSpec{
+					Predictor: func() PredictorSpec {
+						p := tfPredictor()
+						p.ComponentExtensionSpec = ComponentExtensionSpec{
+							AutoScaling: &AutoScalingSpec{
+								Metrics: []MetricsSpec{
+									{
+										Type: ExternalMetricSourceType,
+										External: &ExternalMetricSource{
+											Metric: ExternalMetrics{
+												Backend: PrometheusBackend,
+												Query:   "avg(vllm_requests_running)",
+											},
+											Target: MetricTarget{
+												Type:  ValueMetricType,
+												Value: NewMetricQuantity("10"),
+											},
+										},
+									},
+								},
+							},
+						}
+						return p
+					}(),
+				},
+			},
+			// validateScalingHPACompExtension already rejects non-Resource metric types
+			// with its own message before our new default-branch guard fires.
+			errMatcher: gomega.MatchError(gomega.ContainSubstring("invalid HPA metric source type")),
+		},
+		// PodMetric type must also be rejected without autoscalerClass=keda.
+		"Reject PodMetric type with no autoscalerClass annotation": {
+			isvc: &InferenceService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"serving.kserve.io/deploymentMode": "Standard",
+					},
+				},
+				Spec: InferenceServiceSpec{
+					Predictor: func() PredictorSpec {
+						p := tfPredictor()
+						p.ComponentExtensionSpec = ComponentExtensionSpec{
+							AutoScaling: &AutoScalingSpec{
+								Metrics: []MetricsSpec{
+									{
+										Type: PodMetricSourceType,
+										PodMetric: &PodMetricSource{
+											Metric: PodMetrics{
+												Backend: OpenTelemetryBackend,
+												Query:   "avg(vllm_requests_running)",
+											},
+											Target: MetricTarget{
+												Type:  ValueMetricType,
+												Value: NewMetricQuantity("10"),
+											},
+										},
+									},
+								},
+							},
+						}
+						return p
+					}(),
+				},
+			},
+			errMatcher: gomega.MatchError(gomega.ContainSubstring(
+				fmt.Sprintf("metric source type [%s] requires annotation %s=%s",
+					PodMetricSourceType,
+					constants.AutoscalerClass,
+					constants.AutoscalerClassKeda,
+				),
+			)),
+		},
+		// Sanity check: a plain Resource metric without autoscalerClass still passes.
+		"Allow Resource metric type with no autoscalerClass annotation": {
+			isvc: &InferenceService{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "foo",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"serving.kserve.io/deploymentMode": "Standard",
+					},
+				},
+				Spec: InferenceServiceSpec{
+					Predictor: func() PredictorSpec {
+						p := tfPredictor()
+						p.ComponentExtensionSpec = ComponentExtensionSpec{
+							AutoScaling: &AutoScalingSpec{
+								Metrics: []MetricsSpec{
+									{
+										Type: ResourceMetricSourceType,
+										Resource: &ResourceMetricSource{
+											Name: ResourceMetricCPU,
+											Target: MetricTarget{
+												Type:               UtilizationMetricType,
+												AverageUtilization: ptr.To(int32(80)),
+											},
+										},
+									},
+								},
+							},
+						}
+						return p
+					}(),
+				},
+			},
+			errMatcher: gomega.BeNil(),
+		},
+	}
+
+	for name, scenario := range scenarios {
+		t.Run(name, func(t *testing.T) {
+			validator := InferenceServiceValidator{}
+			_, err := validator.ValidateCreate(t.Context(), scenario.isvc)
+			g.Expect(err).Should(scenario.errMatcher)
+		})
+	}
+}
+
 func TestRejectMultipleModelSpecs(t *testing.T) {
 	g := gomega.NewGomegaWithT(t)
 	isvc := makeTestInferenceService()

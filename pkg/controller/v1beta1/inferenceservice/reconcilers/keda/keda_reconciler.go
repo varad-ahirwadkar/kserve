@@ -18,6 +18,7 @@ package keda
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -88,6 +89,9 @@ func getKedaMetrics(componentMeta metav1.ObjectMeta, componentExt *v1beta1.Compo
 		for _, metric := range metrics {
 			switch metric.Type {
 			case v1beta1.ResourceMetricSourceType:
+				if metric.Resource == nil {
+					return nil, errors.New("metricSpec.Resource is not set for resource metric source type")
+				}
 				triggerType := string(metric.Resource.Name)
 				metricType := metric.Resource.Target.Type
 				targetValue := "0"
@@ -113,6 +117,9 @@ func getKedaMetrics(componentMeta metav1.ObjectMeta, componentExt *v1beta1.Compo
 					MetricType: autoscalingv2.MetricTargetType(metricType),
 				})
 			case v1beta1.ExternalMetricSourceType:
+				if metric.External == nil {
+					return nil, errors.New("metricSpec.External is not set for external metric source type")
+				}
 				triggerType := string(metric.External.Metric.Backend)
 				serverAddress := metric.External.Metric.ServerAddress
 				query := metric.External.Metric.Query
@@ -144,6 +151,9 @@ func getKedaMetrics(componentMeta metav1.ObjectMeta, componentExt *v1beta1.Compo
 				}
 				triggers = append(triggers, trigger)
 			case v1beta1.PodMetricSourceType:
+				if metric.PodMetric == nil {
+					return nil, errors.New("metricSpec.PodMetric is not set for pod metric source type")
+				}
 				otelConfig, err := v1beta1.NewOtelCollectorConfig(configMap)
 				if err != nil {
 					return nil, err

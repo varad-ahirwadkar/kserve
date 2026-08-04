@@ -455,6 +455,25 @@ func validateAutoScalingCompExtension(annotations map[string]string, compExtSpec
 			return validateScalingHPACompExtension(compExtSpec)
 		case string(constants.AutoscalerClassKeda):
 			return validateScalingKedaCompExtension(compExtSpec)
+		default:
+			// For autoscaler classes other than explicit "hpa" and "keda" (absent annotation,
+			// "none", "external", or any unknown value), External and PodMetric metric source
+			// types are not supported. Reject early with an actionable error so the user
+			// knows to add autoscalerClass=keda rather than seeing a silent no-op.
+			if compExtSpec != nil && compExtSpec.AutoScaling != nil {
+				for _, metric := range compExtSpec.AutoScaling.Metrics {
+					switch metric.Type {
+					case ExternalMetricSourceType, PodMetricSourceType:
+						return fmt.Errorf(
+							"metric source type [%s] requires annotation %s=%s",
+							metric.Type,
+							constants.AutoscalerClass,
+							constants.AutoscalerClassKeda,
+						)
+					}
+				}
+			}
+			return validateScalingHPACompExtension(compExtSpec)
 		}
 	default:
 		if annotationClass == autoscaling.HPA {
@@ -462,7 +481,6 @@ func validateAutoScalingCompExtension(annotations map[string]string, compExtSpec
 		}
 		return validateScalingKPACompExtension(compExtSpec)
 	}
-	return nil
 }
 
 // Validation of isvc name
